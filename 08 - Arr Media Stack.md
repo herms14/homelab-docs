@@ -1,0 +1,312 @@
+# Arr Media Stack
+
+
+Related: [00 - Homelab Index](00%20-%20Homelab%20Index.md) | [07 - Deployed Services](07%20-%20Deployed%20Services.md) | 11 - Credentials
+
+---
+
+## Overview
+
+All Arr services run on **docker-lxc-media** (CT205, 192.168.40.11) via Docker Compose.
+
+> [!NOTE] Torrent-only since 2026-10-16
+> The Usenet provider (Newshosting) expired on 2026-04-18. The SABnzbd download client is **disabled** (not deleted) in
+> Sonarr, Radarr and Lidarr, and the NZBgeek indexer is disabled in Prowlarr. Torrent indexers in Prowlarr (all synced
+> to the apps): The Pirate Bay, EZTV (FlareSolverr), LimeTorrents, YTS, 1337x (FlareSolverr), Nyaa.si.
+> **To restore Usenet:** add a provider in SABnzbd → Config → Servers, then re-enable NZBgeek in Prowlarr and the
+> SABnzbd download client in each app, and re-enable the server in SABnzbd (disabled 2026-10-16). Task Registry #87.
+>
+> Radarr's "Download Monitor" webhook (`:5052`) has its triggers disabled since 2026-10-16: nothing listens there;
+> Nepheli posts "Ready to watch" on imports instead.
+
+---
+
+## Services
+
+| Service    | Port | URL                                | Purpose             |
+| ---------- | ---- | ---------------------------------- | ------------------- |
+| Jellyfin   | 8096 | https://jellyfin.hrmsmrflrii.xyz   | Media server        |
+| Radarr     | 7878 | https://radarr.hrmsmrflrii.xyz     | Movie management    |
+| Sonarr     | 8989 | https://sonarr.hrmsmrflrii.xyz     | TV series           |
+| Lidarr     | 8686 | https://lidarr.hrmsmrflrii.xyz     | Music               |
+| Prowlarr   | 9696 | https://prowlarr.hrmsmrflrii.xyz   | Indexer manager     |
+| Bazarr     | 6767 | https://bazarr.hrmsmrflrii.xyz     | Subtitles           |
+| Overseerr  | 5055 | https://overseerr.hrmsmrflrii.xyz  | Requests (Plex)     |
+| Jellyseerr | 5056 | https://jellyseerr.hrmsmrflrii.xyz | Requests (Jellyfin) |
+| Tdarr      | 8265 | https://tdarr.hrmsmrflrii.xyz      | Transcoding         |
+| Autobrr    | 7474 | https://autobrr.hrmsmrflrii.xyz    | Torrent automation  |
+| Deluge     | 8112 | https://deluge.hrmsmrflrii.xyz     | BitTorrent client   |
+| SABnzbd    | 8081 | https://sabnzbd.hrmsmrflrii.xyz    | Usenet client (disabled in the apps since 2026-10-16) |
+
+---
+
+## API Keys
+
+| Service | API Key |
+|---------|---------|
+| **Radarr** | `<redacted>` (rotated 2026-08-29) |
+| **Sonarr** | `<redacted>` (rotated 2026-08-29) |
+| **Lidarr** | `<redacted>` |
+| **Prowlarr** | `<redacted>` |
+| **Bazarr** | `<redacted>` |
+
+---
+
+## Download Clients
+
+> [!info] Unified Path Structure (December 23, 2025)
+> All arr-stack services now use unified `/data` mount for hardlink support. Download clients and *arrs share the same path structure.
+
+### Deluge (BitTorrent)
+
+**URL**: https://deluge.hrmsmrflrii.xyz
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 8112 | TCP | Web UI |
+| 6881 | TCP/UDP | Incoming connections |
+
+**Download Paths** (unified `/data` mount):
+| Setting | Container Path | Host Path |
+|---------|----------------|-----------|
+| Download to | `/data/Downloading` | `/mnt/media/Downloading` |
+| Move completed to | `/data/Completed` | `/mnt/media/Completed` |
+
+**Initial Setup**:
+1. Default password: `<redacted>` (change immediately)
+2. Enable label plugin for category support
+3. Configure download paths using unified `/data` mount
+
+**Arr Integration**:
+- Settings → Download Clients → Add → Deluge
+- Host: `deluge` (container name)
+- Port: `8112`
+- Category: `radarr` / `sonarr` / `lidarr`
+- **Remote Path Mapping**: NOT needed (same unified paths)
+- **Password**: must match the Deluge WebUI password (see 11 - Credentials). After the 2026-09-13 reset, Sonarr kept the old password and its torrent grabs failed silently until 2026-10-07. If the WebUI password changes, update it in both Radarr and Sonarr.
+
+> [!tip] Requesting from Discord
+> Sentinel's `/download` command adds movies and series straight to Radarr/Sonarr (quality profile `Any`), starts the search and reports back whether anything was grabbed. See the `/download` orchestration section in [24 - Discord Bots](24%20-%20Discord%20Bots.md).
+
+### SABnzbd (Usenet)
+
+> Not used since 2026-10-16 (no Usenet provider); see the note under Overview.
+
+**URL**: https://sabnzbd.hrmsmrflrii.xyz
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 8081 | TCP | Web UI |
+
+**Download Paths** (unified `/data` mount):
+| Setting | Container Path | Host Path |
+|---------|----------------|-----------|
+| Temporary Download Folder | `/data/Incomplete` | `/mnt/media/Incomplete` |
+| Completed Download Folder | `/data/Completed` | `/mnt/media/Completed` |
+
+**Hostname Whitelist**:
+SABnzbd requires external hostnames to be whitelisted. Configured in `/opt/arr-stack/sabnzbd/sabnzbd.ini`:
+```ini
+host_whitelist = sabnzbd.hrmsmrflrii.xyz, <container_id>,
+```
+
+**Initial Setup**:
+1. Complete wizard on first access
+2. Add Usenet server credentials
+3. Get API key from Config → General → Security
+4. Configure categories: `radarr`, `sonarr`, `lidarr`
+
+**Arr Integration**:
+- Settings → Download Clients → Add → SABnzbd
+- Host: `sabnzbd` (container name)
+- Port: `8080` (internal)
+- API Key: (from Config → General → Security)
+- Category: `radarr` / `sonarr` / `lidarr`
+- **Remote Path Mapping**: NOT needed (same unified paths)
+
+---
+
+## Inter-Application Connections
+
+### Prowlarr → *Arrs (Configured)
+```
+Prowlarr syncs indexers to:
+├── Radarr (Full Sync, Movies categories)
+├── Sonarr (Full Sync, TV categories)
+└── Lidarr (Full Sync, Audio categories)
+```
+
+### Bazarr → *Arrs (Configured)
+```
+Bazarr connects to:
+├── Radarr: radarr:7878 (container network)
+└── Sonarr: sonarr:8989 (container network)
+```
+
+### Jellyseerr → Services (Needs Setup)
+```
+Jellyseerr needs manual setup:
+├── Connect to Jellyfin (after Jellyfin wizard)
+├── Add Radarr server
+└── Add Sonarr server
+```
+
+---
+
+## Storage Configuration
+
+### Local Config
+```
+/opt/arr-stack/
+├── jellyfin/config/
+├── radarr/
+├── sonarr/
+├── lidarr/
+├── prowlarr/
+├── bazarr/
+├── jellyseerr/
+├── tdarr/
+├── autobrr/
+├── deluge/
+└── sabnzbd/
+```
+
+### NFS Media Mount (Unified Paths)
+
+> [!tip] Why Unified Paths?
+> All services mount `/mnt/media` as `/data`. This enables **hardlinks** for instant imports and saves disk space.
+
+```
+Mount: /mnt/media (NFS from 192.168.20.32)
+├── /Completed       # Download clients put finished files here
+├── /Downloading     # Active downloads
+├── /Incomplete      # Partial downloads
+├── /Movies          # Radarr organizes movies here
+├── /Series          # Sonarr organizes TV here
+└── /Music           # Lidarr organizes music here
+```
+
+### Container Path Reference
+
+| Service | Volume Mount | Root Folder | Downloads |
+|---------|--------------|-------------|-----------|
+| Radarr | `/mnt/media:/data` | `/data/Movies` | `/data/Completed` |
+| Sonarr | `/mnt/media:/data` | `/data/Series` | `/data/Completed` |
+| Lidarr | `/mnt/media:/data` | `/data/Music` | `/data/Completed` |
+| Bazarr | `/mnt/media:/data` | `/data/Movies`, `/data/Series` | N/A |
+| Deluge | `/mnt/media:/data` | N/A | `/data/Completed` |
+| SABnzbd | `/mnt/media:/data` | N/A | `/data/Completed` |
+
+---
+
+## Manual Setup Required
+
+### Radarr
+1. Navigate to https://radarr.hrmsmrflrii.xyz
+2. Settings → Media Management → Root Folder: `/data/Movies`
+3. Settings → Download Clients → Add Deluge/SABnzbd (no remote path mapping needed)
+
+### Sonarr
+1. Navigate to https://sonarr.hrmsmrflrii.xyz
+2. Settings → Media Management → Root Folder: `/data/Series`
+3. Settings → Download Clients → Add Deluge/SABnzbd (no remote path mapping needed)
+
+### Lidarr
+1. Navigate to https://lidarr.hrmsmrflrii.xyz
+2. Settings → Media Management → Root Folder: `/data/Music`
+3. Settings → Download Clients → Add Deluge/SABnzbd (no remote path mapping needed)
+
+### Jellyfin
+1. Navigate to http://192.168.40.11:8096
+2. Complete startup wizard
+3. Add media libraries:
+   - Movies: `/data/movies`
+   - TV Shows: `/data/tvshows`
+
+### Bazarr
+1. Go to Settings → Languages
+2. Create language profile
+
+### Jellyseerr (now Seerr)
+
+> **Updated February 2026:** Jellyseerr was rebranded to **Seerr** at v3.0. Image changed from `fallenbagel/jellyseerr:latest` to `ghcr.io/seerr-team/seerr:latest`.
+
+**Current Version:** 3.0.1
+**Docker Image:** `ghcr.io/seerr-team/seerr:latest`
+**Port:** 5056 → 5055 (internal)
+**URL:** https://jellyseerr.hrmsmrflrii.xyz
+
+1. Complete setup wizard at http://192.168.40.11:5056
+2. Connect to Jellyfin
+3. Add Radarr: `radarr:7878` with API key
+4. Add Sonarr: `sonarr:8989` with API key
+
+**Upgrade from v2.x:**
+- Seerr runs as UID 1000 (not root) — fix permissions with `chown -R 1000:1000`
+- Add `init: true` to docker-compose service
+- Migration runs automatically on first startup
+
+---
+
+## Connection Diagram
+
+```
+                         ┌─────────────────┐
+                         │    PROWLARR     │
+                         │     :9696       │
+                         │ (Indexer Mgr)   │
+                         └────────┬────────┘
+                                  │ Full Sync
+                    ┌─────────────┼─────────────┐
+                    ▼             ▼             ▼
+             ┌──────────┐  ┌──────────┐  ┌──────────┐
+             │  RADARR  │  │  SONARR  │  │  LIDARR  │
+             │  :7878   │  │  :8989   │  │  :8686   │
+             │ (Movies) │  │   (TV)   │  │ (Music)  │
+             └────┬─────┘  └────┬─────┘  └──────────┘
+                  │             │
+                  └──────┬──────┘
+                         ▼
+                  ┌──────────┐
+                  │  BAZARR  │
+                  │  :6767   │
+                  │(Subtitles)│
+                  └──────────┘
+
+             ┌──────────┐
+             │ JELLYFIN │ ◄─── After setup, connects to:
+             │  :8096   │
+             │(Streaming)│      ┌──────────────┐
+             └──────────┘      │  JELLYSEERR  │
+                               │    :5056     │
+                               │  (Requests)  │
+                               └──────────────┘
+```
+
+---
+
+## Management Commands
+
+```bash
+# SSH to host
+ssh hermes-admin@192.168.40.11
+
+# View logs
+cd /opt/arr-stack && sudo docker compose logs -f
+
+# Restart all services
+cd /opt/arr-stack && sudo docker compose restart
+
+# Update all containers
+cd /opt/arr-stack && sudo docker compose pull && sudo docker compose up -d
+```
+
+---
+
+## Related Documentation
+
+- [07 - Deployed Services](07%20-%20Deployed%20Services.md) - All services overview
+- 11 - Credentials - API keys and passwords
+- [03 - Storage Architecture](03%20-%20Storage%20Architecture.md) - NFS media storage
+- [09 - Traefik Reverse Proxy](09%20-%20Traefik%20Reverse%20Proxy.md) - External access
+- [24 - Discord Bots](24%20-%20Discord%20Bots.md) - Sentinel `/download` (Discord → Radarr/Sonarr)
